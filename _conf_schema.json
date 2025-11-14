@@ -1,0 +1,93 @@
+{
+  "mosaic_level": {
+    "description": "封面图打码程度",
+    "type": "float",
+    "hint": "设置封面图的马赛克程度，0为不打码，数值越大越模糊，建议0.1-0.9之间。",
+    "default": 0.8,
+    "min": 0.0,
+    "max": 1.0
+  },
+  "proxy": {
+    "description": "代理地址",
+    "type": "string",
+    "hint": "例如 http://127.0.0.1:7890，留空则不使用代理。",
+    "default": ""
+  },
+  "timeout": {
+    "description": "请求超时时间（秒）",
+    "type": "int",
+    "hint": "网络请求的超时时间，单位为秒。",
+    "default": 30,
+    "min": 5,
+    "max": 120
+  },
+  "user_agent": {
+    "description": "用户代理字符串",
+    "type": "string",
+    "hint": "访问网站时使用的User-Agent，留空则使用默认值。",
+    "default": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36"
+  },
+  "max_retries": {
+    "description": "最大重试次数",
+    "type": "int",
+    "hint": "网络请求失败时的最大重试次数。",
+    "default": 3,
+    "min": 0,
+    "max": 10
+  },
+  "return_details": {
+    "description": "是否在结果中返回视频标题和时长",
+    "type": "bool",
+    "hint": "开启后，将在封面图下方附带视频标题和时长信息。",
+    "default": true
+  },
+  "phub_language": {
+    "description": "PHub API语言设置",
+    "type": "string",
+    "hint": "设置PHub API返回内容的语言。",
+    "default": "cn",
+    "options": ["en", "cn", "de", "fr", "it", "pt", "pl", "rt", "nl", "cz", "jp"]
+  },
+  "phub_delay": {
+    "description": "PHub API请求延迟（秒）",
+    "type": "float",
+    "hint": "设置PHub API请求之间的延迟时间，避免请求过于频繁。",
+    "default": 0.0,
+    "min": 0.0,
+    "max": 5.0
+  },
+  "phub_login_email": {
+    "description": "PHub登录邮箱",
+    "type": "string",
+    "hint": "PHub账户登录邮箱，留空则不登录。",
+    "default": ""
+  },
+  "phub_login_password": {
+    "description": "PHub登录密码",
+    "type": "string",
+    "hint": "PHub账户登录密码，留空则不登录。",
+    "default": ""
+  },
+  "search_default_sort": {
+    "description": "默认搜索排序方式",
+    "type": "string",
+    "hint": "设置搜索结果的默认排序方式。",
+    "default": "recent",
+    "options": ["recent", "views", "rated", "longuest"]
+  },
+  "search_default_period": {
+    "description": "默认搜索时间范围",
+    "type": "string",
+    "hint": "设置搜索结果的默认时间范围。",
+    "default": "all",
+    "options": ["all", "day", "week", "month", "year"]
+  },
+  "max_search_results": {
+    "description": "最大搜索结果数量",
+    "type": "int",
+    "hint": "设置搜索返回的最大结果数量。",
+    "default": 10,
+    "min": 1,
+    "max": 50
+  }
+}
