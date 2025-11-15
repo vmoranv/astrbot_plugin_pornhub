@@ -40,7 +40,6 @@ class PornHubPlugin(Star):
         os.makedirs(self.temp_dir, exist_ok=True)
         self.http_client: Optional[aiohttp.ClientSession] = None
         self.phub_client: Optional[Client] = None
-        pass
 
     async def initialize(self):
         """插件初始化方法"""
@@ -54,8 +53,8 @@ class PornHubPlugin(Star):
             login = bool(email and password)
 
             self.phub_client = Client(
-                email=email if email else None,
-                password=password if password else None,
+                email=email or None,
+                password=password or None,
                 language=language,
                 login=login,
             )
@@ -63,8 +62,7 @@ class PornHubPlugin(Star):
             # 如果提供了登录信息，尝试登录
             if login:
                 try:
-                    login_success = self.phub_client.login()
-                    if login_success:
+                    if self.phub_client.login():
                         logger.info("PHub登录成功")
                     else:
                         logger.warning("PHub登录失败")
@@ -286,289 +284,197 @@ class PornHubPlugin(Star):
     @filter.command("ph_video", alias={"phv", "视频详情"})
     async def get_pornhub_video_details(self, event: AstrMessageEvent, viewkey: str):
         """获取PornHub视频详情"""
+        yield event.plain_result("正在获取视频详情，请稍候...")
+
+        # 确保HTTP客户端已初始化
+        if not self.http_client:
+            await self.initialize_async()
+
+        if not self.phub_client:
+            yield event.plain_result("PHub客户端未初始化")
+            return
+
+        # 构建完整的视频URL
+        video_url = f"https://www.pornhub.com/view_video.php?viewkey={viewkey}"
+
+        # 获取视频对象
+        video = None
         try:
-            yield event.plain_result("正在获取视频详情，请稍候...")
-
-            # 确保HTTP客户端已初始化
-            if not self.http_client:
-                await self.initialize_async()
-
-            if not self.phub_client:
-                yield event.plain_result("PHub客户端未初始化")
-                return
-
-            # 构建完整的视频URL
-            video_url = f"https://www.pornhub.com/view_video.php?viewkey={viewkey}"
-
-            # 获取视频对象
-            try:
-                video = self.phub_client.get(video_url)
-            except (URLError, VideoError) as e:
-                logger.error(f"视频URL无效或视频不可用: {e}")
-                yield event.plain_result("视频URL无效或视频不可用")
-                return
-            except RegionBlocked as e:
-                logger.error(f"视频在您所在的地区被限制: {e}")
-                yield event.plain_result("视频在您所在的地区被限制访问")
-                return
-            except PremiumVideo as e:
-                logger.error(f"这是Premium视频: {e}")
-                yield event.plain_result("这是Premium视频，需要订阅才能访问")
-                return
-            except (ParsingError, MaxRetriesExceeded) as e:
-                logger.error(f"获取视频详情失败: {e}")
-                yield event.plain_result("获取视频详情失败，请稍后再试")
-                return
-            except Exception as e:
-                logger.error(f"获取视频异常: {e}")
-                yield event.plain_result("获取视频异常，请稍后再试")
-                return
-
-            # 下载图片
-            image_path = await self.download_phub_image(video.image)
-            image_sent = False
-
-            if image_path:
-                # 打码处理
-                censored_image_path = await self.censor_image(image_path)
-                if censored_image_path:  # 如果打码成功
-                    # 发送图片
-                    yield event.image_result(censored_image_path)
-                    image_sent = True
-                else:
-                    logger.warning("图片打码失败，不发送图片")
-            else:
-                logger.warning("图片下载失败，继续获取视频信息")
-
-            # 发送视频详细信息
-            try:
-                # 禁用查询模拟以避免Regex错误
-                if hasattr(video, "ALLOW_QUERY_SIMULATION"):
-                    video.ALLOW_QUERY_SIMULATION = False
-
-                # 使用更安全的方式获取属性，避免Regex错误
-                # 先获取基础信息，使用最安全的方式
-                title = "未知标题"
-                duration = "未知时长"
-                views = "未知观看次数"
-                date = "未知日期"
-                is_hd = False
-                is_vr = False
-                author_name = "未知"
-                video_url = "未知链接"
-
-                # 获取标题 - 最重要的信息，优先获取
-                try:
-                    title = getattr(video, "title", "未知标题")
-                    if not title or title == "未知标题":
-                        # 尝试其他可能的属性
-                        title = getattr(
-                            video, "title_original", getattr(video, "name", "未知标题")
-                        )
-                except Exception as e:
-                    logger.warning(f"获取标题失败: {e}")
-                    title = "未知标题"
-
-                # 获取其他信息
-                try:
-                    duration = getattr(video, "duration", "未知时长")
-                except Exception as e:
-                    logger.warning(f"获取时长失败: {e}")
-                    duration = "未知时长"
-
-                try:
-                    views = getattr(video, "views", "未知观看次数")
-                except Exception as e:
-                    logger.warning(f"获取观看次数失败: {e}")
-                    views = "未知观看次数"
-
-                try:
-                    date = getattr(video, "date", "未知日期")
-                except Exception as e:
-                    logger.warning(f"获取日期失败: {e}")
-                    date = "未知日期"
-
-                try:
-                    is_hd = getattr(video, "is_HD", False)
-                except Exception as e:
-                    logger.warning(f"获取HD状态失败: {e}")
-                    is_hd = False
-
-                try:
-                    is_vr = getattr(video, "is_VR", False)
-                except Exception as e:
-                    logger.warning(f"获取VR状态失败: {e}")
-                    is_vr = False
-
-                # 安全获取作者信息 - 放在最后，避免影响其他属性
-                try:
-                    author = getattr(video, "author", None)
-                    if author:
-                        author_name = getattr(author, "name", "未知作者")
-                    else:
-                        # 尝试从其他属性获取作者信息
-                        author_name = getattr(video, "author_name", "未知")
-                except Exception as e:
-                    logger.warning(f"获取作者信息失败: {e}")
-                    # 尝试从其他可能的属性获取
-                    try:
-                        author_name = getattr(video, "author_name", "未知")
-                    except Exception:
-                        author_name = "未知"
-
-                # 安全获取视频URL
-                try:
-                    video_url = getattr(video, "url", "未知链接")
-                except Exception as e:
-                    logger.warning(f"获取视频URL失败: {e}")
-                    video_url = "未知链接"
-
-                info_text = (
-                    f"标题: {title}\n"
-                    f"时长: {duration}\n"
-                    f"观看次数: {views}\n"
-                    f"发布日期: {date}\n"
-                    f"是否高清: {'是' if is_hd else '否'}\n"
-                    f"是否VR: {'是' if is_vr else '否'}\n"
-                    f"作者: {author_name}\n"
-                    f"链接: {video_url}"
-                )
-                yield event.plain_result(info_text)
-
-                # 如果图片下载失败，在这里提示用户
-                if not image_sent:
-                    yield event.plain_result("（图片下载失败，仅显示视频信息）")
-            except Exception as e:
-                logger.error(f"获取视频信息失败: {e}")
-                import traceback
-
-                logger.error(f"详细错误信息: {traceback.format_exc()}")
-                yield event.plain_result("获取视频信息失败")
-
+            video = self.phub_client.get(video_url)
+        except (URLError, VideoError) as e:
+            logger.error(f"视频URL无效或视频不可用: {e}")
+            yield event.plain_result("视频URL无效或视频不可用")
+            return
+        except RegionBlocked as e:
+            logger.error(f"视频在您所在的地区被限制: {e}")
+            yield event.plain_result("视频在您所在的地区被限制访问")
+            return
+        except PremiumVideo as e:
+            logger.error(f"这是Premium视频: {e}")
+            yield event.plain_result("这是Premium视频，需要订阅才能访问")
+            return
+        except (ParsingError, MaxRetriesExceeded) as e:
+            logger.error(f"获取视频详情失败: {e}")
+            yield event.plain_result("获取视频详情失败，请稍后再试")
+            return
         except Exception as e:
-            logger.error(f"获取PornHub视频详情失败: {e}")
-            yield event.plain_result(f"获取详情失败: {str(e)}")
+            logger.error(f"获取视频异常: {e}")
+            yield event.plain_result("获取视频异常，请稍后再试")
+            return
+
+        # 下载图片
+        image_path = await self.download_phub_image(video.image)
+        image_sent = False
+
+        if image_path:
+            # 打码处理
+            censored_image_path = await self.censor_image(image_path)
+            if censored_image_path:  # 如果打码成功
+                # 发送图片
+                yield event.image_result(censored_image_path)
+                image_sent = True
+            else:
+                logger.warning("图片打码失败，不发送图片")
+        else:
+            logger.warning("图片下载失败，继续获取视频信息")
+
+        # 发送视频详细信息
+        # 禁用查询模拟以避免Regex错误
+        if hasattr(video, "ALLOW_QUERY_SIMULATION"):
+            video.ALLOW_QUERY_SIMULATION = False
+
+        # 使用更安全的方式获取属性，避免Regex错误
+        # 先获取基础信息，使用最安全的方式
+        title = self._safe_get_attribute(video, "title", "未知标题", ["title_original", "name"])
+        duration = self._safe_get_attribute(video, "duration", "未知时长")
+        views = self._safe_get_attribute(video, "views", "未知观看次数")
+        date = self._safe_get_attribute(video, "date", "未知日期")
+        is_hd = self._safe_get_attribute(video, "is_HD", False)
+        is_vr = self._safe_get_attribute(video, "is_VR", False)
+        
+        # 安全获取作者信息
+        author_name = "未知"
+        try:
+            author = getattr(video, "author", None)
+            if author:
+                author_name = self._safe_get_attribute(author, "name", "未知作者")
+            else:
+                # 尝试从视频对象直接获取作者信息
+                author_name = self._safe_get_attribute(video, "author_name", "未知")
+        except Exception as e:
+            logger.warning(f"获取作者信息失败: {e}")
+            author_name = "未知"
+
+        video_url = self._safe_get_attribute(video, "url", "未知链接")
+
+        info_text = (
+            f"标题: {title}\n"
+            f"时长: {duration}\n"
+            f"观看次数: {views}\n"
+            f"发布日期: {date}\n"
+            f"是否高清: {'是' if is_hd else '否'}\n"
+            f"是否VR: {'是' if is_vr else '否'}\n"
+            f"作者: {author_name}\n"
+            f"链接: {video_url}"
+        )
+        yield event.plain_result(info_text)
+
+        # 如果图片下载失败，在这里提示用户
+        if not image_sent:
+            yield event.plain_result("（图片下载失败，仅显示视频信息")
+
 
     @filter.command("ph_user", alias={"phu", "用户信息"})
     async def get_pornhub_user_info(self, event: AstrMessageEvent, username: str):
         """获取PornHub用户信息"""
+        yield event.plain_result(f"正在获取用户 {username} 的信息，请稍候...")
+
+        # 确保HTTP客户端已初始化
+        if not self.http_client:
+            await self.initialize_async()
+
+        if not self.phub_client:
+            yield event.plain_result("PHub客户端未初始化")
+            return
+
+        # 获取用户对象
+        user = await self._get_user_object(username)
+        if not user:
+            yield event.plain_result(
+                f"未找到用户 '{username}'，请检查用户名是否正确"
+            )
+            return
+
+        # 下载头像
         try:
-            yield event.plain_result(f"正在获取用户 {username} 的信息，请稍候...")
-
-            # 确保HTTP客户端已初始化
-            if not self.http_client:
-                await self.initialize_async()
-
-            if not self.phub_client:
-                yield event.plain_result("PHub客户端未初始化")
-                return
-
-            # 获取用户对象 - 使用搜索方式避免Regex错误
-            user = None
-            try:
-                # 首先尝试直接获取用户（适用于某些情况）
-                user = self.phub_client.get_user(username)
-
-                # 禁用查询模拟以避免Regex错误
-                if hasattr(user, "ALLOW_QUERY_SIMULATION"):
-                    user.ALLOW_QUERY_SIMULATION = False
-            except Exception as e:
-                logger.warning(f"直接获取用户失败，尝试搜索: {e}")
-
-                # 如果直接获取失败，尝试搜索用户
-                try:
-                    user_query = self.phub_client.search_user(username=username)
-                    for found_user in user_query:
-                        # 禁用查询模拟以避免Regex错误
-                        if hasattr(found_user, "ALLOW_QUERY_SIMULATION"):
-                            found_user.ALLOW_QUERY_SIMULATION = False
-
-                        # 检查用户名是否匹配
-                        try:
-                            found_name = (
-                                found_user.name if hasattr(found_user, "name") else ""
-                            )
-                            if found_name.lower() == username.lower():
-                                user = found_user
-                                break
-                        except Exception:
-                            continue
-
-                    if not user:
-                        # 如果没有找到完全匹配的用户，使用第一个结果
-                        for found_user in user_query:
-                            try:
-                                # 禁用查询模拟以避免Regex错误
-                                if hasattr(found_user, "ALLOW_QUERY_SIMULATION"):
-                                    found_user.ALLOW_QUERY_SIMULATION = False
-                                user = found_user
-                                break
-                            except Exception:
-                                continue
-                except Exception as search_e:
-                    logger.error(f"搜索用户失败: {search_e}")
-
-            if not user:
-                yield event.plain_result(
-                    f"未找到用户 '{username}'，请检查用户名是否正确"
-                )
-                return
-
-            # 下载头像
-            try:
-                avatar_path = await self.download_phub_image(user.avatar)
-                if avatar_path:
-                    # 打码处理
-                    censored_avatar_path = await self.censor_image(avatar_path)
-                    if censored_avatar_path:  # 只有打码成功才发送
-                        # 发送头像
-                        yield event.image_result(censored_avatar_path)
-            except Exception as e:
-                logger.error(f"下载用户头像失败: {e}")
-                # 头像下载失败不影响用户信息显示
-
-            # 发送用户信息
-            try:
-                # 使用更安全的方式获取属性，避免Regex错误
-                try:
-                    name = user.name if hasattr(user, "name") else "未知用户"
-                except Exception as e:
-                    logger.warning(f"获取用户名失败: {e}")
-                    name = "未知用户"
-
-                try:
-                    user_type = user.type if hasattr(user, "type") else "未知类型"
-                except Exception as e:
-                    logger.warning(f"获取用户类型失败: {e}")
-                    user_type = "未知类型"
-
-                try:
-                    bio = user.bio if hasattr(user, "bio") else None
-                    bio_text = bio if bio else "无"
-                except Exception as e:
-                    logger.warning(f"获取用户简介失败: {e}")
-                    bio_text = "无"
-
-                try:
-                    user_url = user.url if hasattr(user, "url") else "未知链接"
-                except Exception as e:
-                    logger.warning(f"获取用户链接失败: {e}")
-                    user_url = "未知链接"
-
-                info_text = (
-                    f"用户名: {name}\n"
-                    f"用户类型: {user_type}\n"
-                    f"生物信息: {bio_text}\n"
-                    f"用户链接: {user_url}"
-                )
-                yield event.plain_result(info_text)
-            except Exception as e:
-                logger.error(f"获取用户详细信息失败: {e}")
-                yield event.plain_result("获取用户详细信息失败")
-
+            avatar_path = await self.download_phub_image(user.avatar)
+            if avatar_path:
+                # 打码处理
+                censored_avatar_path = await self.censor_image(avatar_path)
+                if censored_avatar_path:  # 只有打码成功才发送
+                    # 发送头像
+                    yield event.image_result(censored_avatar_path)
         except Exception as e:
-            logger.error(f"获取PornHub用户信息失败: {e}")
-            yield event.plain_result(f"获取用户信息失败: {str(e)}")
+            logger.error(f"下载用户头像失败: {e}")
+            # 头像下载失败不影响用户信息显示
+
+        # 发送用户信息
+        name = self._safe_get_attribute(user, "name", "未知用户")
+        user_type = self._safe_get_attribute(user, "type", "未知类型")
+        bio = self._safe_get_attribute(user, "bio", None)
+        bio_text = bio or "无"
+        user_url = self._safe_get_attribute(user, "url", "未知链接")
+
+        info_text = (
+            f"用户名: {name}\n"
+            f"用户类型: {user_type}\n"
+            f"生物信息: {bio_text}\n"
+            f"用户链接: {user_url}"
+        )
+        yield event.plain_result(info_text)
+
+    async def _get_user_object(self, username: str):
+        """获取用户对象，支持直接获取和搜索两种方式"""
+        try:
+            # 首先尝试直接获取用户（适用于某些情况）
+            user = self.phub_client.get_user(username)
+            # 禁用查询模拟以避免Regex错误
+            if hasattr(user, "ALLOW_QUERY_SIMULATION"):
+                user.ALLOW_QUERY_SIMULATION = False
+            return user
+        except Exception as e:
+            logger.warning(f"直接获取用户失败，尝试搜索: {e}")
+
+        # 如果直接获取失败，尝试搜索用户
+        try:
+            user_query = self.phub_client.search_user(username=username)
+            for found_user in user_query:
+                # 禁用查询模拟以避免Regex错误
+                if hasattr(found_user, "ALLOW_QUERY_SIMULATION"):
+                    found_user.ALLOW_QUERY_SIMULATION = False
+
+                # 检查用户名是否匹配
+                try:
+                    found_name = self._safe_get_attribute(found_user, "name", "")
+                    if found_name.lower() == username.lower():
+                        return found_user
+                except Exception:
+                    continue
+
+            # 如果没有找到完全匹配的用户，使用第一个结果
+            for found_user in user_query:
+                try:
+                    # 禁用查询模拟以避免Regex错误
+                    if hasattr(found_user, "ALLOW_QUERY_SIMULATION"):
+                        found_user.ALLOW_QUERY_SIMULATION = False
+                    return found_user
+                except Exception:
+                    continue
+        except Exception as search_e:
+            logger.error(f"搜索用户失败: {search_e}")
+
+        return None
+
 
     @filter.command("ph_playlist", alias={"php", "播放列表"})
     async def get_pornhub_playlist(self, event: AstrMessageEvent, playlist_id: str):
@@ -600,8 +506,7 @@ class PornHubPlugin(Star):
 
             # 获取播放列表中的第一个视频作为示例
             try:
-                videos = list(playlist.sample(max=1))
-                if videos:
+                if (videos := list(playlist.sample(max=1))):
                     video = videos[0]
                     # 下载图片
                     image_path = await self.download_phub_image(video.image)
@@ -921,120 +826,26 @@ class PornHubPlugin(Star):
                 return
 
             # 获取最新视频
-            try:
-                # 首先尝试使用HubTraffic API
-                try:
-                    search_terms = ["popular", "recommended", "trending", "featured"]
-                    selected_term = random.choice(search_terms)
-                    recent_query = self.phub_client.search_hubtraffic(
-                        selected_term, sort="recent"
-                    )
-                    recent_videos = list(recent_query.sample(max=20))
-                except Exception as e:
-                    logger.warning(f"HubTraffic API统计搜索失败，尝试普通搜索: {e}")
-                    # 如果HubTraffic失败，尝试普通搜索
-                    search_terms = ["popular", "recommended", "trending", "featured"]
-                    selected_term = random.choice(search_terms)
-                    recent_query = self.phub_client.search(selected_term, sort="recent")
-                    recent_videos = list(recent_query.sample(max=20))
-            except Exception as e:
-                logger.error(f"获取最新视频失败: {e}")
-                yield event.plain_result("获取最新视频失败，请稍后再试")
-                return
-
+            recent_videos = await self._get_videos_with_fallback("recent", 20)
             if not recent_videos:
                 yield event.plain_result("未找到视频，无法生成统计信息")
                 return
 
             # 计算统计信息
-            total_videos = len(recent_videos)
-            total_views = sum(
-                video.views
-                for video in recent_videos
-                if hasattr(video, "views") and video.views
-            )
-            avg_views = total_views / total_videos if total_videos > 0 else 0
-
-            # 计算平均时长
-            durations = []
-            for video in recent_videos:
-                if hasattr(video, "duration") and video.duration:
-                    try:
-                        # 尝试解析时长字符串
-                        duration_str = str(video.duration)
-                        if ":" in duration_str:
-                            parts = duration_str.split(":")
-                            if len(parts) == 2:  # 格式: mm:ss
-                                minutes = int(parts[0])
-                                seconds = int(parts[1])
-                                durations.append(minutes * 60 + seconds)
-                            elif len(parts) == 3:  # 格式: hh:mm:ss
-                                hours = int(parts[0])
-                                minutes = int(parts[1])
-                                seconds = int(parts[2])
-                                durations.append(hours * 3600 + minutes * 60 + seconds)
-                    except (ValueError, TypeError):
-                        continue
-
-            avg_duration_seconds = sum(durations) / len(durations) if durations else 0
-            avg_duration_minutes = avg_duration_seconds / 60
-
+            stats = self._calculate_video_stats(recent_videos)
+            
             # 获取精选视频数量
-            try:
-                # 首先尝试使用HubTraffic API
-                try:
-                    search_terms = ["popular", "recommended", "trending", "featured"]
-                    selected_term = random.choice(search_terms)
-                    featured_query = self.phub_client.search_hubtraffic(
-                        selected_term, sort="featured"
-                    )
-                    featured_videos = list(featured_query.sample(max=10))
-                    featured_count = len(featured_videos)
-                except Exception as e:
-                    logger.warning(f"HubTraffic API精选搜索失败，尝试普通搜索: {e}")
-                    # 如果HubTraffic失败，尝试普通搜索
-                    search_terms = ["popular", "recommended", "trending", "featured"]
-                    selected_term = random.choice(search_terms)
-                    # 普通搜索不支持 "featured"，使用 "views" 替代
-                    featured_query = self.phub_client.search(
-                        selected_term, sort="views"
-                    )
-                    featured_videos = list(featured_query.sample(max=10))
-                    featured_count = len(featured_videos)
-            except Exception as e:
-                logger.error(f"获取精选视频失败: {e}")
-                featured_count = 0
-
+            featured_count = await self._get_video_count_with_fallback("featured", "views", 10)
+            
             # 获取高评分视频数量
-            try:
-                # 首先尝试使用HubTraffic API
-                try:
-                    search_terms = ["popular", "recommended", "trending", "featured"]
-                    selected_term = random.choice(search_terms)
-                    rating_query = self.phub_client.search_hubtraffic(
-                        selected_term, sort="rating"
-                    )
-                    rating_videos = list(rating_query.sample(max=10))
-                    rating_count = len(rating_videos)
-                except Exception as e:
-                    logger.warning(f"HubTraffic API评分搜索失败，尝试普通搜索: {e}")
-                    # 如果HubTraffic失败，尝试普通搜索
-                    search_terms = ["popular", "recommended", "trending", "featured"]
-                    selected_term = random.choice(search_terms)
-                    # 普通搜索支持 "rated"
-                    rating_query = self.phub_client.search(selected_term, sort="rated")
-                    rating_videos = list(rating_query.sample(max=10))
-                    rating_count = len(rating_videos)
-            except Exception as e:
-                logger.error(f"获取高评分视频失败: {e}")
-                rating_count = 0
+            rating_count = await self._get_video_count_with_fallback("rating", "rated", 10)
 
             # 发送统计信息
             stats_text = (
                 f"📊 PornHub视频统计信息\n"
-                f"📹 最新视频数量: {total_videos}\n"
-                f"👀 平均观看次数: {avg_views:,.0f}\n"
-                f"⏱️ 平均时长: {avg_duration_minutes:.1f} 分钟\n"
+                f"📹 最新视频数量: {stats['total_videos']}\n"
+                f"👀 平均观看次数: {stats['avg_views']:,.0f}\n"
+                f"⏱️ 平均时长: {stats['avg_duration_minutes']:.1f} 分钟\n"
                 f"⭐ 精选视频数量: {featured_count}\n"
                 f"🏆 高评分视频数量: {rating_count}\n"
                 f"📅 统计时间: {asyncio.get_event_loop().time()}"
@@ -1044,6 +855,108 @@ class PornHubPlugin(Star):
         except Exception as e:
             logger.error(f"获取视频统计失败: {e}")
             yield event.plain_result(f"获取统计信息失败: {str(e)}")
+
+    async def _get_videos_with_fallback(self, sort_type: str, max_results: int):
+        """获取视频，优先使用HubTraffic API，失败时回退到普通搜索"""
+        try:
+            # 首先尝试使用HubTraffic API
+            try:
+                search_terms = ["popular", "recommended", "trending", "featured"]
+                selected_term = random.choice(search_terms)
+                query = self.phub_client.search_hubtraffic(selected_term, sort=sort_type)
+                return list(query.sample(max=max_results))
+            except Exception as e:
+                logger.warning(f"HubTraffic API搜索失败，尝试普通搜索: {e}")
+                # 如果HubTraffic失败，尝试普通搜索
+                search_terms = ["popular", "recommended", "trending", "featured"]
+                selected_term = random.choice(search_terms)
+                query = self.phub_client.search(selected_term, sort=sort_type)
+                return list(query.sample(max=max_results))
+        except Exception as e:
+            logger.error(f"获取视频失败: {e}")
+            return []
+
+    async def _get_video_count_with_fallback(self, hubtraffic_sort: str, fallback_sort: str, max_results: int):
+        """获取视频数量，优先使用HubTraffic API，失败时回退到普通搜索"""
+        try:
+            # 首先尝试使用HubTraffic API
+            try:
+                search_terms = ["popular", "recommended", "trending", "featured"]
+                selected_term = random.choice(search_terms)
+                query = self.phub_client.search_hubtraffic(selected_term, sort=hubtraffic_sort)
+                videos = list(query.sample(max=max_results))
+                return len(videos)
+            except Exception as e:
+                logger.warning(f"HubTraffic API搜索失败，尝试普通搜索: {e}")
+                # 如果HubTraffic失败，尝试普通搜索
+                search_terms = ["popular", "recommended", "trending", "featured"]
+                selected_term = random.choice(search_terms)
+                query = self.phub_client.search(selected_term, sort=fallback_sort)
+                videos = list(query.sample(max=max_results))
+                return len(videos)
+        except Exception as e:
+            logger.error(f"获取视频数量失败: {e}")
+            return 0
+
+    def _safe_get_attribute(self, obj, attr_name, default_value=None, fallback_attrs=None):
+        """安全获取对象属性，支持多个备选属性名"""
+        try:
+            # 首先尝试获取主要属性
+            value = getattr(obj, attr_name, default_value)
+            if value != default_value:
+                return value
+            
+            # 如果主要属性不存在或为默认值，尝试备选属性
+            if fallback_attrs:
+                for fallback_attr in fallback_attrs:
+                    value = getattr(obj, fallback_attr, default_value)
+                    if value != default_value:
+                        return value
+            
+            return default_value
+        except Exception as e:
+            logger.warning(f"获取属性 {attr_name} 失败: {e}")
+            return default_value
+
+    def _calculate_video_stats(self, videos):
+        """计算视频统计信息"""
+        total_videos = len(videos)
+        total_views = sum(
+            video.views
+            for video in videos
+            if hasattr(video, "views") and video.views
+        )
+        avg_views = total_videos > 0 and total_views / total_videos or 0
+
+        # 计算平均时长
+        durations = []
+        for video in videos:
+            if hasattr(video, "duration") and video.duration:
+                try:
+                    # 尝试解析时长字符串
+                    duration_str = str(video.duration)
+                    if ":" in duration_str:
+                        parts = duration_str.split(":")
+                        if len(parts) == 2:  # 格式: mm:ss
+                            minutes = int(parts[0])
+                            seconds = int(parts[1])
+                            durations.append(minutes * 60 + seconds)
+                        elif len(parts) == 3:  # 格式: hh:mm:ss
+                            hours = int(parts[0])
+                            minutes = int(parts[1])
+                            seconds = int(parts[2])
+                            durations.append(hours * 3600 + minutes * 60 + seconds)
+                except (ValueError, TypeError):
+                    continue
+
+        avg_duration_seconds = durations and sum(durations) / len(durations) or 0
+        avg_duration_minutes = avg_duration_seconds / 60
+
+        return {
+            'total_videos': total_videos,
+            'avg_views': avg_views,
+            'avg_duration_minutes': avg_duration_minutes
+        }
 
     @filter.command("ph_help", alias={"ph帮助", "pornhub帮助"})
     async def show_help(self, event: AstrMessageEvent):
@@ -1109,18 +1022,13 @@ amateur, anal, asian, babe, bdsm, big-ass, big-tits, blonde, blowjob, brunette, 
                 return None
 
             # 获取图片URL
-            # 确保image不为None
-            image_url = None
-            if image is not None:
-                image_url = getattr(image, "url", None)
+            image_url = getattr(image, "url", None) if image else None
             if not image_url:
                 logger.error("图片URL为空")
                 return None
 
             # 生成临时文件路径
-            file_extension = os.path.splitext(urlparse(image_url).path)[1]
-            if not file_extension:
-                file_extension = ".jpg"  # 默认扩展名
+            file_extension = os.path.splitext(urlparse(image_url).path)[1] or ".jpg"  # 默认扩展名
 
             temp_file_path = os.path.join(
                 self.temp_dir,
@@ -1161,14 +1069,12 @@ amateur, anal, asian, babe, bdsm, big-ass, big-tits, blonde, blowjob, brunette, 
                 width, height = img.size
 
                 # 计算马赛克块大小（基于图片尺寸的百分比）
-                # 确保config不为None
-                mosaic_level = 0.8  # 默认值
                 if self.config is not None:
-                    mosaic_level = self.config.get(
-                        "mosaic_level", 0.8
-                    )  # 默认马赛克程度
-                if mosaic_level <= 0 or mosaic_level > 1:
-                    mosaic_level = 0.8
+                    mosaic_level = self.config.get("mosaic_level", 0.8)  # 默认马赛克程度
+                    if mosaic_level <= 0 or mosaic_level > 1:
+                        mosaic_level = 0.8
+                else:
+                    mosaic_level = 0.8  # 默认值
 
                 # 根据马赛克程度计算块大小
                 # 马赛克程度越高，块大小越大
